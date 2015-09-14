@@ -287,7 +287,7 @@ int main(int argc,char** argv)
     }
     const int connection = pbs_connect("localhost");
    // TestPBSFunc(connection);
-    if (connection==-1) {printf("pbs error: %s\n",pbs_strerror(pbs_errno)); return EXIT_FAILURE;}
+    if (connection<0) {printf("pbs error: %s\n",pbs_strerror(pbs_errno)); return EXIT_FAILURE;}
     user* users;
     node* n = GetNodeInfo(connection);
     job* j = GetJobInfo(connection,n,&users);
@@ -300,5 +300,6 @@ int main(int argc,char** argv)
     printq(j);
     printmyjobs(users);
     PropStats(n);
+    printfooter();
     return EXIT_SUCCESS;
 }

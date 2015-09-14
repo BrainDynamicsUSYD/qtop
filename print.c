@@ -5,6 +5,8 @@
 #include <time.h>  //maketime
 #include <stdlib.h> //malloc
 #include <math.h>    //ceil
+#include <sys/types.h>
+#include <pwd.h>
 #include "qtop.h" //examples of functions needed are incomplete
 #include "print.h"
 
@@ -87,9 +89,18 @@ int GetPropinfo(const node* n,propinfo** p)
     return propcounter;
 
 }
+void setme()
+{
+    uid_t uid = geteuid();
+    struct passwd *pw = getpwuid(uid);
+    me = pw->pw_name;
+}
 int UserNo (const user* u,const user* cu) //algorithm for allocating numbers is currently n^2 - could make it better with sorting, but typically number of users is small, so current method is simpler
 {
-    if (me == NULL) { me = getenv("LOGNAME");}
+    if (me == NULL)
+    {
+        setme();
+    }
     if (!(strcmp(cu->name,me))) {return 0;}
     const user* start = u;
     int i=1; //me always gets user 0
@@ -117,12 +128,12 @@ const char* UserColourStr(const int userno,const int fg)
 }
 int UserCount(const user* u)
 {
-    if (me == NULL) { me = getenv("LOGNAME");}
+    if (me == NULL) { setme();}
     int ret = 1;
     while(u != NULL) {if (strcmp(u->name,me)){ret++;}u=u->next;}
     return ret;
 }
-
+int HighLoadNode = 0;
 void actuallyprintnode (const node* const cn,const int propcount, const propinfo* const props,const user* const u)
 {
     if (cn->up==0)
@@ -135,7 +146,7 @@ void actuallyprintnode (const node* const cn,const int propcount, const propinfo
                 nodecol=basecols[i];
             }
         }
-        printf("%s%s%s %s%5.2f%s ",nodecol,cn->name,resetstr,cn->loadave > (float)cn->cores+1.5?Highlight:"",cn->loadave,resetstr);
+        printf("%s%s%s %s%5.2f%s ",nodecol,cn->name,resetstr,cn->loadave > (float)cn->users_using_count+1.0?(HighLoadNode++, Highlight):"",cn->loadave,resetstr);
         printf(boxon);
         putchar(boxchars[leftedge]);
         int i=0;
@@ -198,7 +209,7 @@ void printnode(const node* n,const user* u)
     int colindex=0;
     int printed = 0;
     node* bign=nodes[0];
-    do     
+    do
     {
         if (bign->cores > MINMAXCPUS) {actuallyprintnode(bign,propcount,props,u);printf("\n");}
         bign=bign->next;
@@ -270,27 +281,47 @@ void printmyjobs(const user* u)
         u=u->next;
     }
 }
-int printSomeJobs(const job* j, const jobstate s)
+void printSomeJobs(const job* j, const jobstate s,const int count)
 {
     int i = 0;
     int accum=0;
-    while(i<2 && j != NULL) //print the first 2 jobs in some state
+    while(j != NULL) //print the first 2 jobs in some state
     {
        if (j->state==s)
         {
+            if (i==0)
+            {
+                if (s==R)
+                {
+                    accum += printf("    Running (%4i)| ",count);
+                }
+                else if (s==Q)
+                {
+                    accum += printf("    Queued  (%4i)| ",count);
+                }
+                else if (s==S)
+                {
+                    accum += printf("    Suspended     | ");
+                }
+            }
+            accum += printf("%ix%i ",j->number,j->corecount);
             i++;
-            accum+= printf("%ix%i ",j->number,j->corecount);
         }
         j=j->usernext;
     }
-    while (j != NULL) {if (j->state==s) {accum += printf ("..");break;}j=j->next;}
-    return accum;
+
+    if (i!= 0)
+    {
+        for (;accum<(twidth);accum++) {printf(" ");} //fill in some white space
+        printf("\n");
+    }
+ //   while (j != NULL) {if (j->state==s) {accum += printf ("..");break;}j=j->next;}
 }
 void printuser(const user* u)
 {
     if (u != NULL)
     {
-        heading_fill("Name         | Run    Q Running jobs          Queued jobs           Suspended jobs");
+        heading_fill("Name              | Jobs");
         const user* start=u;
         const int count = UserCount(u);
         for (int i=0;i<count;i++)
@@ -300,14 +331,13 @@ void printuser(const user* u)
             {
                 if (UserNo(start,u)==i)
                 {
-                    int initial = printf ("%s%-13s|%4i %4i ",UserColourStr(i,1),u->realname,u->runcount,u->queuecount) - strlen(UserColourStr(i,1));
-                    int accum = printSomeJobs(u->jobs,R);
-                    for (;accum<22;accum++) {printf(" ");} //fill in some white space
-                    accum += printSomeJobs(u->jobs,Q);
-                    for (;accum<44;accum++) {printf(" ");} //fill in some white space
-                    accum += printSomeJobs(u->jobs,S);
-                    for (;accum<(twidth-initial);accum++) {printf(" ");} //fill in some white space
-                    printf("%s\n",resetstr);
+                    int initial = printf ("%s%-18s| ",UserColourStr(i,1),u->realname) - strlen(UserColourStr(i,1));
+                    for (;initial<(twidth);initial++) {printf(" ");} //fill in some white space
+                    printf("\n");
+                    printSomeJobs(u->jobs,R,u->runcount);
+                    printSomeJobs(u->jobs,Q,u->queuecount);
+                    printSomeJobs(u->jobs,S,0);
+                    printf("%s",resetstr);
                 }
                 u=u->next;
             }
@@ -406,6 +436,11 @@ void PropStats(const node* n)
             }
             cn=cn->next;
         }
+        //hacky method to shorten the group names to make the text neater
+        if (strchr(props[i].propname,',') != NULL)
+        {
+            strchr(props[i].propname,',')[0] = 0;
+        }
         printf("%s%-10s |",basecols[i],props[i].propname);
         for (int j=0;j<1+16/2  + (MAXCPUS-16)/4 ;j++) {printf("%3i ",props[i].free[j]);}
         printf("%s\n",resetstr);
@@ -431,5 +466,17 @@ void FreeCpu(const node* n)
             cn=cn->next;
         }
         printf("%i",props[i].free[0]);
+    }
+}
+void printfooter()
+{
+    if (HighLoadNode>0)
+    {
+        printf("============================\n");
+        printf("%s%s\n",Highlight,"ONE OR MORE NODES HAVE A HIGH LOAD AVERAGE");
+        printf("%s\n","THIS RESULTS IN DEGRADED PERFORMANCE");
+        printf("%s\n","MAYBE YOU NEED TO USE `-singleCompThread` WITH MATLAB?");
+        printf("%s",resetstr);
+        printf("============================\n");
     }
 }
